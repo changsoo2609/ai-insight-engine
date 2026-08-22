@@ -83,7 +83,7 @@ Action: ..."""
             if not cause: cause = "-"
             if not action: action = "-"
         rows.append({"주제": int(r["cluster"]), "핵심 이슈": issue, "원인": cause, "조치": action})
-    return pd.DataFrame(rows).sort_values("cluster")
+    return pd.DataFrame(rows).sort_values("주제")
 
 # 사이드바: API 키 - 로그인 방식 (인식 후 입력창 숨김)
 if "nvidia_key" not in st.session_state:
