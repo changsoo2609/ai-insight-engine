@@ -68,7 +68,8 @@ if st.session_state.state:
     st.plotly_chart(st.session_state.state["fig"], use_container_width=True)
     st.download_button("결과 CSV 다운로드", st.session_state.state["summary"].to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig"), "result.csv", "text/csv")
     st.divider(); st.subheader("Semantic Search")
-    q=st.text_input("Query", placeholder="예: 취업 지원"); topk=st.slider("Top-K", 3, 10, 5, key="topk")
+    q=st.text_input("Query", placeholder="예: 취업 지원 (사투리도 가능: 취업할라 카는데)"); topk=st.slider("Top-K", 3, 10, 5, key="topk")
+    threshold = st.slider("Similarity Threshold (사투리면 0.30~0.45 권장)", 0.0, 1.0, 0.40, 0.05, key="threshold", help="이 점수 미만은 숨김. 사투리는 표준어보다 점수가 낮게 나와 threshold를 낮춰야 합니다.")
     if st.button("Search"):
         if not q.strip():
             st.warning("검색어를 입력하세요.")
@@ -77,4 +78,12 @@ if st.session_state.state:
             sims=cosine_similarity(qemb, st.session_state.state["emb"]).ravel()
             idx=sims.argsort()[::-1][:topk]
             res=pd.DataFrame([{"rank":r,"score":float(sims[i]),"cluster":int(st.session_state.state["df"].iloc[i]["cluster"]),"text":st.session_state.state["df"].iloc[i]["text"]} for r,i in enumerate(idx,1)])
-            st.dataframe(res, use_container_width=True, hide_index=True, column_config={"score": st.column_config.NumberColumn("score", format="%.4f"), "text": st.column_config.TextColumn("text", width="large")})
+            filtered = res[res["score"] >= threshold].reset_index(drop=True)
+            if filtered.empty:
+                st.warning(f"임계값 {threshold:.2f} 이상 결과가 없습니다. Threshold를 낮춰보세요. (Top-{topk} 최고점: {res['score'].max():.4f})")
+                st.dataframe(res, use_container_width=True, hide_index=True, column_config={"score": st.column_config.NumberColumn("score", format="%.4f"), "text": st.column_config.TextColumn("text", width="large")})
+                st.caption("참고: 사투리/구어체는 표준어보다 score가 낮게 나옵니다.")
+            else:
+                if len(filtered) < len(res):
+                    st.info(f"Top-{topk} 중 {len(filtered)}건만 Threshold {threshold:.2f} 이상")
+                st.dataframe(filtered, use_container_width=True, hide_index=True, column_config={"score": st.column_config.NumberColumn("score", format="%.4f"), "text": st.column_config.TextColumn("text", width="large")})
