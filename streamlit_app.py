@@ -1,4 +1,4 @@
-import io, pandas as pd, numpy as np, streamlit as st, plotly.express as px
+import io, os, pandas as pd, numpy as np, streamlit as st, plotly.express as px
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
@@ -7,6 +7,57 @@ from sentence_transformers import SentenceTransformer
 
 st.set_page_config(page_title="AI Insight Engine", layout="wide")
 st.title("AI Insight Engine — Streamlit")
+
+def summarize_clusters_with_llm(summary_df, api_key, model="google/gemma-2-9b-it"):
+    try:
+        from openai import OpenAI
+    except ImportError:
+        raise RuntimeError("openai 패키지가 필요합니다. requirements.txt에 openai 추가 후 재배포하세요.")
+    client = OpenAI(base_url="https://integrate.api.nvidia.com/v1", api_key=api_key)
+    rows = []
+    for _, r in summary_df.iterrows():
+        prompt = f"""당신은 청년 의견 분석가입니다. 아래 클러스터를 Issue / Root Cause / Action 3줄로 요약하세요. 각 항목은 1문장, 한글로 간결하게.
+
+클러스터 {int(r['cluster'])}:
+- 키워드: {r['keywords']}
+- 대표의견: {r['대표의견']}
+- 의견 수: {int(r['count'])}개
+
+형식 (반드시 이 형식):
+Issue: ...
+Root Cause: ...
+Action: ..."""
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            max_tokens=300,
+        )
+        text = resp.choices[0].message.content.strip()
+        issue = cause = action = ""
+        for line in text.splitlines():
+            if line.startswith("Issue:"): issue = line.replace("Issue:", "").strip()
+            elif line.startswith("Root Cause:"): cause = line.replace("Root Cause:", "").strip()
+            elif line.startswith("Action:"): action = line.replace("Action:", "").strip()
+        if not (issue and cause and action):
+            issue = text[:100]
+        rows.append({"cluster": int(r["cluster"]), "Issue": issue, "Root Cause": cause, "Action": action})
+    return pd.DataFrame(rows).sort_values("cluster")
+
+# 사이드바: API 키 입력 (깃에 노출 방지 - Secrets 또는 입력창)
+with st.sidebar:
+    st.subheader("AI 요약 설정")
+    st.caption("키 입력은 메모리에만 저장되고 깃에 올라가지 않습니다.")
+    secret_key = st.secrets.get("NVIDIA_API_KEY", "") if hasattr(st, "secrets") else ""
+    user_key = st.text_input("NVIDIA API Key", type="password", placeholder="nvapi-...", help="https://integrate.nvidia.com 에서 발급. 비워두면 Secrets의 키를 사용합니다.", key="nvidia_key_input")
+    effective_api_key = (user_key.strip() if user_key else secret_key)
+    if effective_api_key:
+        st.success("API 키 인식됨")
+        os.environ["NVIDIA_API_KEY"] = effective_api_key
+    else:
+        st.info("키를 입력하면 주제 요약 기능이 활성화됩니다.")
+    st.divider()
+    st.caption("모델: google/gemma-2-9b-it (무료)")
 
 @st.cache_resource
 def load_model():
@@ -67,6 +118,22 @@ if st.session_state.state:
     st.dataframe(st.session_state.state["summary"], use_container_width=True, hide_index=True)
     st.plotly_chart(st.session_state.state["fig"], use_container_width=True)
     st.download_button("결과 CSV 다운로드", st.session_state.state["summary"].to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig"), "result.csv", "text/csv")
+    st.divider(); st.subheader("AI 주제 요약 (Issue / 원인 / 조치)")
+    st.caption("Nvidia Gemma 무료 모델로 클러스터별 핵심을 자동 요약합니다. API 키가 있으면 활성화됩니다.")
+    if st.button("AI 요약 생성", type="secondary"):
+        if not effective_api_key:
+            st.warning("사이드바에 NVIDIA API Key를 입력하거나 Streamlit Secrets에 등록하세요.")
+        else:
+            with st.spinner("AI 요약 생성 중... (클러스터 수만큼 호출)"):
+                try:
+                    ai_summary = summarize_clusters_with_llm(st.session_state.state["summary"], effective_api_key)
+                    st.session_state["ai_summary"] = ai_summary
+                    st.success("요약 완료")
+                except Exception as e:
+                    st.error(f"요약 실패: {e}")
+    if "ai_summary" in st.session_state:
+        st.dataframe(st.session_state["ai_summary"], use_container_width=True, hide_index=True)
+        st.download_button("AI 요약 CSV 다운로드", st.session_state["ai_summary"].to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig"), "ai_summary.csv", "text/csv")
     st.divider(); st.subheader("의미 검색")
     st.caption("찾고 싶은 내용을 문장으로 입력하면 비슷한 의견만 골라줍니다. 사투리로 입력해도 됩니다.")
     with st.form("search_form", clear_on_submit=False):
