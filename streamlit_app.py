@@ -123,12 +123,28 @@ with st.sidebar:
         st.caption("키를 입력하면 요약 기능이 켜집니다.")
         _input = st.text_input("API Key", type="password", label_visibility="collapsed", key="nvidia_key_input")
         if st.button("인증", use_container_width=True, key="auth_nvidia"):
-            if _input.strip():
-                st.session_state.nvidia_key = _input.strip()
-                st.rerun()
-            else:
+            _k = _input.strip()
+            if not _k:
                 st.warning("키를 입력하세요.")
-        st.caption("발급: integrate.nvidia.com")
+            elif not _k.startswith("nvapi-"):
+                st.error("키 형식이 올바르지 않습니다. nvapi-로 시작해야 합니다.")
+            else:
+                with st.spinner("키 확인 중..."):
+                    try:
+                        from openai import OpenAI
+                        _ck = "".join(c for c in _k if 32 <= ord(c) <= 126)
+                        _client = OpenAI(base_url="https://integrate.api.nvidia.com/v1", api_key=_ck)
+                        # 가벼운 호출로 키 유효성 검증
+                        _client.models.list()
+                        st.session_state.nvidia_key = _ck
+                        st.success("인증되었습니다 ✓")
+                        st.rerun()
+                    except Exception as e:
+                        estr = str(e).lower()
+                        if "401" in estr or "unauthorized" in estr or "authentication" in estr:
+                            st.error("인증 실패: 키가 올바르지 않거나 만료되었습니다. integrate.nvidia.com에서 다시 발급받으세요.")
+                        else:
+                            st.error(f"확인 실패: {e}")
 
 effective_api_key = st.session_state.nvidia_key
 if effective_api_key:
