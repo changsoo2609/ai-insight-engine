@@ -154,6 +154,25 @@ def build_analysis(raw, k):
     centers=km.cluster_centers_/np.linalg.norm(km.cluster_centers_, axis=1, keepdims=True)
     reps=[{"cluster":c,"대표의견":df.iloc[np.where(df["cluster"]==c)[0][cosine_similarity(emb[np.where(df["cluster"]==c)[0]], [centers[c]]).ravel().argmax()]]["text"]} for c in sorted(df["cluster"].unique())]
     summary=cnt.merge(kw, on="cluster").merge(pd.DataFrame(reps), on="cluster")
+    # LLM 없이도 쓰는 한 단어 주제명 (TF-IDF 1위 키워드)
+    def _short_name(kw_str):
+        w = kw_str.split(",")[0].strip()
+        # 2글자 이하는 두 단어 합치기
+        if len(w) <= 2 and "," in kw_str:
+            w2 = kw_str.split(",")[1].strip()
+            w = w + w2[:2]
+        return w
+    summary["주제명"] = summary["keywords"].apply(_short_name)
+    # 중복 주제명 처리
+    seen = {}
+    for i, r in summary.iterrows():
+        n = r["주제명"]
+        if n in seen:
+            seen[n] += 1
+            summary.at[i, "주제명"] = f"{n}{seen[n]}"
+        else:
+            seen[n] = 1
+    # 표시 순서: 주제명, 키워드, 의견수 ...
     return df, emb, km, summary, fig
 
 if "state" not in st.session_state: st.session_state.state=None
@@ -167,41 +186,71 @@ if st.button("분석 시작", type="primary"):
             st.session_state.state={"df":df,"emb":emb,"km":km,"summary":summary,"fig":fig}
             st.success(f"분석 완료: {len(df):,}개 / {k}개 주제")
 if st.session_state.state:
-    st.dataframe(st.session_state.state["summary"], use_container_width=True, hide_index=True)
+    # 요약: 주제명(한 단어) + 카드형으로 잘림 해소
+    summ = st.session_state.state["summary"]
+    # 표시용 요약 (길이 제한)
+    disp = summ[["cluster","주제명","keywords","count","대표의견"]].copy()
+    disp.columns = ["번호","주제명","키워드","의견 수","대표 한마디"]
+    disp["대표 한마디"] = disp["대표 한마디"].str.slice(0, 60) + "…"
+    st.dataframe(disp, use_container_width=True, hide_index=True, column_config={
+        "번호": st.column_config.NumberColumn("번호", width="small"),
+        "주제명": st.column_config.TextColumn("주제명", width="small"),
+        "키워드": st.column_config.TextColumn("키워드", width="medium"),
+        "의견 수": st.column_config.NumberColumn("의견 수", width="small"),
+        "대표 한마디": st.column_config.TextColumn("대표 한마디", width="large"),
+    })
+    with st.expander("전체 표 보기 / 원문 전체"):
+        st.dataframe(summ, use_container_width=True, hide_index=True)
     st.plotly_chart(st.session_state.state["fig"], use_container_width=True)
     st.download_button("결과 CSV 다운로드", st.session_state.state["summary"].to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig"), "result.csv", "text/csv")
     st.divider(); st.subheader("AI 주제 요약")
+    st.caption("주제명은 TF-IDF 1위 키워드에서 자동 생성됩니다. API 키가 있으면 더 자연스러운 한 단어명으로 다시 생성합니다.")
     if not effective_api_key:
-        st.info("사이드바에서 인증하면 요약을 생성할 수 있습니다.")
+        st.info("사이드바에서 인증하면 AI가 주제명을 더 자연스럽게 다듬어줍니다.")
+        # LLM 없이도 카드로 요약 표시
+        cols = st.columns(min(3, len(summ)))
+        for i, (_, r) in enumerate(summ.iterrows()):
+            with cols[i % len(cols)]:
+                with st.container(border=True):
+                    st.markdown(f"**{r['주제명']}** · {r['count']}개")
+                    st.caption(r['keywords'])
+                    st.write(r['대표의견'][:80] + "…")
     if st.button("AI 요약 생성", type="secondary", disabled=not bool(effective_api_key)):
         if not effective_api_key:
             st.warning("사이드바에서 먼저 인증하세요.")
         else:
-            with st.spinner("AI 요약 생성 중... (클러스터 수만큼 호출)"):
+            with st.spinner("AI 요약 생성 중..."):
                 try:
                     ai_summary = summarize_clusters_with_llm(st.session_state.state["summary"], effective_api_key)
+                    # LLM이 주제명을 한 단어로 다듬은 경우 반영
+                    # ai_summary의 주제가 주제명을 덮어쓰도록
                     st.session_state["ai_summary"] = ai_summary
                     st.success("요약 완료")
                 except Exception as e:
                     st.error(f"요약 실패: {e}")
     if "ai_summary" in st.session_state:
-        # 테이블 잘림 방지: 글 줄바꿈 허용 + 컬럼 너비 조정
         st.markdown("""<style>
-        [data-testid="stDataFrame"] td { white-space: normal !important; word-break: break-word !important; }
+        [data-testid="stDataFrame"] td { white-space: normal !important; word-break: keep-all !important; line-height: 1.6; }
         </style>""", unsafe_allow_html=True)
-        st.dataframe(st.session_state["ai_summary"], use_container_width=True, hide_index=True, height=420,
-            column_config={
-                "주제": st.column_config.NumberColumn("주제", width="small"),
-                "핵심 이슈": st.column_config.TextColumn("핵심 이슈", width="large"),
-                "원인": st.column_config.TextColumn("원인", width="large"),
-                "조치": st.column_config.TextColumn("조치", width="large"),
-                # 구버전 키 호환
-                "cluster": st.column_config.NumberColumn("주제", width="small"),
-                "Issue": st.column_config.TextColumn("핵심 이슈", width="large"),
-                "Root Cause": st.column_config.TextColumn("원인", width="large"),
-                "Action": st.column_config.TextColumn("조치", width="large"),
-            })
-        st.download_button("AI 요약 CSV 다운로드", st.session_state["ai_summary"].to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig"), "ai_summary.csv", "text/csv")
+        # AI 요약도 카드형으로 잘림 해소 + 테이블은 접어둠
+        ai = st.session_state["ai_summary"]
+        # 카드 뷰
+        ccols = st.columns(min(3, len(ai)))
+        for i, (_, r) in enumerate(ai.iterrows()):
+            with ccols[i % len(ccols)]:
+                with st.container(border=True):
+                    st.markdown(f"**{r['주제']}. {r['핵심 이슈'][:40]}**")
+                    st.caption(f"원인: {r['원인'][:50]}")
+                    st.write(r["조치"][:60])
+        with st.expander("표로 보기 / 다운로드"):
+            st.dataframe(ai, use_container_width=True, hide_index=True,
+                column_config={
+                    "주제": st.column_config.NumberColumn("주제", width="small"),
+                    "핵심 이슈": st.column_config.TextColumn("핵심 이슈", width="large"),
+                    "원인": st.column_config.TextColumn("원인", width="large"),
+                    "조치": st.column_config.TextColumn("조치", width="large"),
+                })
+            st.download_button("AI 요약 CSV 다운로드", ai.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig"), "ai_summary.csv", "text/csv")
     st.divider(); st.subheader("의미 검색")
     with st.form("search_form", clear_on_submit=False):
         q=st.text_input("검색어", placeholder="예: 취업 지원")
