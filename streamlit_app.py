@@ -29,9 +29,12 @@ st.caption("360개 목소리를 7개 동네로 나눠 30초 만에 살펴보세�
 def summarize_clusters_with_llm(summary_df, api_key, model=None):
     try:
         from openai import OpenAI
+        import httpx
     except ImportError:
         raise RuntimeError("openai 패키지가 필요합니다. requirements.txt에 openai 추가 후 재배포하세요.")
-    client = OpenAI(base_url="https://integrate.api.nvidia.com/v1", api_key=api_key)
+    # ascii 오류 방지: httpx 클라이언트에 utf-8 강제
+    _http = httpx.Client(headers={"Content-Type": "application/json; charset=utf-8"}, timeout=60)
+    client = OpenAI(base_url="https://integrate.api.nvidia.com/v1", api_key=api_key, http_client=_http, default_headers={"Content-Type": "application/json; charset=utf-8"})
     # 404 대비: Gemma 우선, 실패 시 Llama로 폴백 (둘 다 Nvidia 무료)
     candidates = [model] if model else ["google/gemma-2-9b-it", "meta/llama-3.1-8b-instruct", "mistralai/mistral-7b-instruct-v0.3"]
     rows = []
@@ -50,22 +53,32 @@ Action: ..."""
         last_err = None
         text = None
         for m in candidates:
-            try:
-                resp = client.chat.completions.create(
-                    model=m,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.2,
-                    max_tokens=300,
-                )
-                text = resp.choices[0].message.content.strip()
+            # 한글 프롬프트 ascii 오류 시 영문 프롬프트로 재시도
+            attempts = [prompt, f"You are a youth opinion analyst. Summarize cluster {int(r['cluster'])} with keywords: {r['keywords']} and representative: {r['대표의견']} into 3 lines: Issue: ... Root Cause: ... Action: ... Each 1 sentence in Korean."]
+            for attempt_idx, p in enumerate(attempts):
+                try:
+                    resp = client.chat.completions.create(
+                        model=m,
+                        messages=[{"role": "user", "content": p}],
+                        temperature=0.2,
+                        max_tokens=300,
+                    )
+                    text = resp.choices[0].message.content.strip()
+                    break
+                except Exception as e:
+                    last_err = e
+                    # ascii 인코딩 오류면 다음 프롬프트(영문)로 재시도
+                    if "ascii" in str(e).lower() and attempt_idx == 0:
+                        continue
+                    if "404" in str(e) or "not found" in str(e).lower():
+                        break
+                    raise
+            if text is not None:
                 break
-            except Exception as e:
-                last_err = e
-                if "404" in str(e) or "not found" in str(e).lower():
-                    continue
-                raise
         if text is None:
-            raise RuntimeError(f"LLM 호출 실패 (시도 모델: {candidates}): {last_err}")
+            # ascii 오류 상세 노출 방지: repr로 안전 표시
+            err_str = repr(last_err) if last_err else "unknown"
+            raise RuntimeError(f"LLM 호출 실패 (시도 모델: {candidates}): {err_str}")
         # 견고한 파싱: "- Issue:" , "클러스터 0 요약:" 등 변형 대응
         import re
         # 앞의 "클러스터 ... 요약:" 제거
@@ -259,7 +272,12 @@ if st.session_state.state:
                     st.session_state["ai_summary"] = ai_summary
                     st.success("요약 완료")
                 except Exception as e:
-                    st.error(f"요약 실패: {e}")
+                    import traceback
+                    # ascii 오류 시 화면 표시도 utf-8로 안전 처리
+                    msg = str(e).encode("utf-8", errors="replace").decode("utf-8", errors="replace")
+                    st.error(f"요약 실패: {msg}")
+                    with st.expander("상세 로그"):
+                        st.code(traceback.format_exc())
     if "ai_summary" in st.session_state and effective_api_key:
         st.markdown("""<style>
         [data-testid="stDataFrame"] td { white-space: normal !important; word-break: keep-all !important; line-height: 1.6; }
