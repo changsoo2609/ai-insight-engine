@@ -35,7 +35,18 @@ def build_analysis(raw, k):
     tfidf=vec.fit_transform(docs["text"]); feat=vec.get_feature_names_out()
     kw=pd.DataFrame([{"cluster":cid, "keywords":", ".join(feat[tfidf[i].toarray().ravel().argsort()[::-1][:6]])} for i,cid in enumerate(docs["cluster"])])
     pca=PCA(n_components=2, random_state=42); xy=pca.fit_transform(emb); df["x"],df["y"]=xy[:,0],xy[:,1]
-    fig=px.scatter(df, x="x", y="y", color=df["cluster"].astype(str), hover_data={"text":True}, title="Topic Map")
+    fig=px.scatter(
+        df, x="x", y="y", color=df["cluster"].astype(str),
+        hover_data={"x": False, "y": False, "text": True, "cluster": True},
+        color_discrete_sequence=px.colors.qualitative.Bold,
+        title="Topic Map",
+        labels={"color": "Topic"},
+    )
+    # hover에는 text/cluster만, x/y 수치 숨김 + 마커 진하게/크게
+    fig.update_traces(marker=dict(size=9, opacity=0.95, line=dict(width=0.7, color="white")))
+    fig.update_layout(legend_title_text="Topic", xaxis_title=None, yaxis_title=None)
+    fig.update_xaxes(showticklabels=False, showgrid=False, zeroline=False)
+    fig.update_yaxes(showticklabels=False, showgrid=False, zeroline=False)
     cnt=df["cluster"].value_counts().sort_index().reset_index(); cnt.columns=["cluster","count"]
     centers=km.cluster_centers_/np.linalg.norm(km.cluster_centers_, axis=1, keepdims=True)
     reps=[{"cluster":c,"대표의견":df.iloc[np.where(df["cluster"]==c)[0][cosine_similarity(emb[np.where(df["cluster"]==c)[0]], [centers[c]]).ravel().argmax()]]["text"]} for c in sorted(df["cluster"].unique())]
@@ -53,14 +64,17 @@ if st.button("Analyze", type="primary"):
             st.session_state.state={"df":df,"emb":emb,"km":km,"summary":summary,"fig":fig}
             st.success(f"분석 완료: {len(df):,}개 / {k}개 토픽")
 if st.session_state.state:
-    st.dataframe(st.session_state.state["summary"], use_container_width=True)
+    st.dataframe(st.session_state.state["summary"], use_container_width=True, hide_index=True)
     st.plotly_chart(st.session_state.state["fig"], use_container_width=True)
     st.download_button("결과 CSV 다운로드", st.session_state.state["summary"].to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig"), "result.csv", "text/csv")
     st.divider(); st.subheader("Semantic Search")
     q=st.text_input("Query", placeholder="예: 취업 지원"); topk=st.slider("Top-K", 3, 10, 5, key="topk")
     if st.button("Search"):
-        qemb=model.encode([q], normalize_embeddings=True)
-        sims=cosine_similarity(qemb, st.session_state.state["emb"]).ravel()
-        idx=sims.argsort()[::-1][:topk]
-        res=pd.DataFrame([{"rank":r,"score":float(sims[i]),"cluster":int(st.session_state.state["df"].iloc[i]["cluster"]),"text":st.session_state.state["df"].iloc[i]["text"]} for r,i in enumerate(idx,1)])
-        st.dataframe(res, use_container_width=True)
+        if not q.strip():
+            st.warning("검색어를 입력하세요.")
+        else:
+            qemb=model.encode([q], normalize_embeddings=True)
+            sims=cosine_similarity(qemb, st.session_state.state["emb"]).ravel()
+            idx=sims.argsort()[::-1][:topk]
+            res=pd.DataFrame([{"rank":r,"score":float(sims[i]),"cluster":int(st.session_state.state["df"].iloc[i]["cluster"]),"text":st.session_state.state["df"].iloc[i]["text"]} for r,i in enumerate(idx,1)])
+            st.dataframe(res, use_container_width=True, hide_index=True, column_config={"score": st.column_config.NumberColumn("score", format="%.4f"), "text": st.column_config.TextColumn("text", width="large")})
