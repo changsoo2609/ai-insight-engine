@@ -155,22 +155,48 @@ def build_analysis(raw, k):
     centers=km.cluster_centers_/np.linalg.norm(km.cluster_centers_, axis=1, keepdims=True)
     reps=[{"cluster":c,"대표의견":df.iloc[np.where(df["cluster"]==c)[0][cosine_similarity(emb[np.where(df["cluster"]==c)[0]], [centers[c]]).ravel().argmax()]]["text"]} for c in sorted(df["cluster"].unique())]
     summary=cnt.merge(kw, on="cluster").merge(pd.DataFrame(reps), on="cluster")
-    # LLM 없이도 쓰는 한 단어 주제명 (TF-IDF 1위 키워드)
+    # LLM 없이도 쓰는 한 단어 주제명 (TF-IDF 키워드에서 조사 제거 후 가장 깔끔한 명사 선택)
+    import re as _re
+    def _clean_token(t: str) -> str:
+        t = t.strip()
+        # 뒤 조사 제거
+        for suf in ["에서", "에게", "에게서", "으로부터", "으로", "로", "와", "과", "을", "를", "이", "가", "은", "는", "도", "만", "에", "의", "까지", "부터", "보다", "처럼", "같이"]:
+            if t.endswith(suf) and len(t) > len(suf) + 1:
+                t = t[: -len(suf)]
+                break
+        return t
     def _short_name(kw_str):
-        w = kw_str.split(",")[0].strip()
-        # 2글자 이하는 두 단어 합치기
-        if len(w) <= 2 and "," in kw_str:
-            w2 = kw_str.split(",")[1].strip()
-            w = w + w2[:2]
-        return w
+        cands = [c.strip() for c in kw_str.split(",")]
+        # 조사 제거 + 길이/일반어 필터 후 첫 번째 유효 명사
+        for c in cands:
+            cc = _clean_token(c)
+            if len(cc) < 2: continue
+            if cc in KOREAN_STOP_WORDS: continue
+            # 한 글자짜리 조사만 남은 경우 제외
+            if _re.fullmatch(r"[가-힣]{1}", cc): continue
+            # 너무 긴 바이그램(공백 포함)은 첫 단어만
+            if " " in cc: cc = cc.split()[0]
+            cc = _clean_token(cc)
+            if cc not in KOREAN_STOP_WORDS and len(cc) >= 2:
+                return cc
+        # 폴백: 첫 키워드 정리
+        return _clean_token(cands[0]) if cands else "주제"
     summary["주제명"] = summary["keywords"].apply(_short_name)
-    # 중복 주제명 처리
+    # 중복 주제명 처리 (예: 주거, 주거2)
     seen = {}
     for i, r in summary.iterrows():
         n = r["주제명"]
         if n in seen:
             seen[n] += 1
-            summary.at[i, "주제명"] = f"{n}{seen[n]}"
+            summary.at[i, "주제명"] = f"{n}"
+            # 중복이면 뒤 키워드로 대체 시도
+            cands = [c.strip() for c in r["keywords"].split(",")]
+            for c in cands[1:]:
+                cc = _clean_token(c)
+                if cc not in seen and cc not in KOREAN_STOP_WORDS and len(cc) >= 2:
+                    summary.at[i, "주제명"] = cc
+                    seen[cc] = 1
+                    break
         else:
             seen[n] = 1
     # 표시 순서: 주제명, 키워드, 의견수 ...
@@ -187,14 +213,12 @@ if st.button("분석 시작", type="primary"):
             st.session_state.state={"df":df,"emb":emb,"km":km,"summary":summary,"fig":fig}
             st.success(f"분석 완료: {len(df):,}개 / {k}개 주제")
 if st.session_state.state:
-    # 요약: 주제명(한 단어) + 카드형으로 잘림 해소
     summ = st.session_state.state["summary"]
-    # 표시용 요약 (길이 제한, 번호 1부터)
     disp = summ[["cluster","주제명","keywords","count","대표의견"]].copy()
     disp["cluster"] = disp["cluster"] + 1
     disp.columns = ["번호","주제명","키워드","의견 수","대표 한마디"]
     disp["대표 한마디"] = disp["대표 한마디"].str.slice(0, 60) + "…"
-    st.dataframe(disp, use_container_width=True, hide_index=True, column_config={
+    st.dataframe(disp, use_container_width=True, hide_index=True, height=min(420, 38 + len(disp)*35), column_config={
         "번호": st.column_config.NumberColumn("번호", width="small"),
         "주제명": st.column_config.TextColumn("주제명", width="small"),
         "키워드": st.column_config.TextColumn("키워드", width="medium"),
@@ -234,25 +258,16 @@ if st.session_state.state:
         st.markdown("""<style>
         [data-testid="stDataFrame"] td { white-space: normal !important; word-break: keep-all !important; line-height: 1.6; }
         </style>""", unsafe_allow_html=True)
-        # AI 요약도 카드형으로 잘림 해소 + 테이블은 접어둠
         ai = st.session_state["ai_summary"]
-        # 카드 뷰
-        ccols = st.columns(min(3, len(ai)))
-        for i, (_, r) in enumerate(ai.iterrows()):
-            with ccols[i % len(ccols)]:
-                with st.container(border=True):
-                    st.markdown(f"**{r['주제']}. {r['핵심 이슈'][:40]}**")
-                    st.caption(f"원인: {r['원인'][:50]}")
-                    st.write(r["조치"][:60])
-        with st.expander("표로 보기 / 다운로드"):
-            st.dataframe(ai, use_container_width=True, hide_index=True,
-                column_config={
-                    "주제": st.column_config.NumberColumn("주제", width="small"),
-                    "핵심 이슈": st.column_config.TextColumn("핵심 이슈", width="large"),
-                    "원인": st.column_config.TextColumn("원인", width="large"),
-                    "조치": st.column_config.TextColumn("조치", width="large"),
-                })
-            st.download_button("AI 요약 CSV 다운로드", ai.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig"), "ai_summary.csv", "text/csv")
+        # 표가 더 어울린다는 요청 반영: 바로 표로 표시
+        st.dataframe(ai, use_container_width=True, hide_index=True, height=min(520, 38 + len(ai)*52),
+            column_config={
+                "주제": st.column_config.NumberColumn("주제", width="small"),
+                "핵심 이슈": st.column_config.TextColumn("핵심 이슈", width="large"),
+                "원인": st.column_config.TextColumn("원인", width="medium"),
+                "조치": st.column_config.TextColumn("조치", width="medium"),
+            })
+        st.download_button("AI 요약 CSV 다운로드", ai.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig"), "ai_summary.csv", "text/csv")
     st.divider(); st.subheader("의미 검색")
     with st.form("search_form", clear_on_submit=False):
         q=st.text_input("검색어", placeholder="예: 취업 지원")
