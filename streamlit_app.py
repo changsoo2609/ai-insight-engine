@@ -99,7 +99,7 @@ with st.sidebar:
             st.rerun()
     else:
         st.caption("키를 입력하면 요약 기능이 켜집니다.")
-        _input = st.text_input("API Key", type="password", placeholder="nvapi-...", label_visibility="collapsed", key="nvidia_key_input")
+        _input = st.text_input("API Key", type="password", label_visibility="collapsed", key="nvidia_key_input")
         if st.button("인증", use_container_width=True, key="auth_nvidia"):
             if _input.strip():
                 st.session_state.nvidia_key = _input.strip()
@@ -270,7 +270,7 @@ if st.session_state.state:
         st.download_button("AI 요약 CSV 다운로드", ai.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig"), "ai_summary.csv", "text/csv")
     st.divider(); st.subheader("의미 검색")
     with st.form("search_form", clear_on_submit=False):
-        q=st.text_input("검색어", placeholder="예: 취업 지원")
+        q=st.text_input("검색어")
         col1, col2 = st.columns(2)
         with col1: topk=st.slider("결과 수", 3, 10, 5, key="topk")
         with col2: threshold = st.slider("유사도 기준", 0.0, 1.0, 0.40, 0.05, key="threshold")
