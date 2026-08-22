@@ -24,7 +24,6 @@ h1 { font-weight: 800 !important; letter-spacing: -0.02em; }
 </style>
 """, unsafe_allow_html=True)
 st.title("광주·전남 청년 속마음 지도")
-st.caption("360개 목소리를 7개 동네로 나눠 30초 만에 살펴보세요 — 사투리로 물어봐도 알아듣습니다")
 
 def summarize_clusters_with_llm(summary_df, api_key, model=None):
     try:
