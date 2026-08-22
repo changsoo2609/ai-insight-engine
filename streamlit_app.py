@@ -66,17 +66,21 @@ Action: ..."""
                     break
                 except Exception as e:
                     last_err = e
-                    # ascii 인코딩 오류면 다음 프롬프트(영문)로 재시도
-                    if "ascii" in str(e).lower() and attempt_idx == 0:
+                    estr = str(e).lower()
+                    # 401은 키 오류라 재시도 의미 없음
+                    if "401" in estr or "unauthorized" in estr or "authentication failed" in estr:
+                        raise RuntimeError("API 키 인증 실패(401). Nvidia 대시보드에서 키가 맞는지, 만료되지 않았는지, nvapi-로 시작하는지 확인하세요.") from e
+                    if "ascii" in estr and attempt_idx == 0:
                         continue
-                    if "404" in str(e) or "not found" in str(e).lower():
+                    if "404" in estr or "not found" in estr:
                         break
                     raise
             if text is not None:
                 break
         if text is None:
-            # ascii 오류 상세 노출 방지: repr로 안전 표시
             err_str = repr(last_err) if last_err else "unknown"
+            if "401" in err_str or "Unauthorized" in err_str:
+                raise RuntimeError("API 키 인증 실패(401). 키를 다시 발급받아 사이드바에 입력하세요. (https://integrate.nvidia.com)")
             raise RuntimeError(f"LLM 호출 실패 (시도 모델: {candidates}): {err_str}")
         # 견고한 파싱: "- Issue:" , "클러스터 0 요약:" 등 변형 대응
         import re
