@@ -1,9 +1,15 @@
-import io, os, pandas as pd, numpy as np, streamlit as st, plotly.express as px
+import io, os, sys, pandas as pd, numpy as np, streamlit as st, plotly.express as px
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer
+# Streamlit Cloud 기본 인코딩 ascii 문제 방지
+os.environ["PYTHONIOENCODING"] = "utf-8"
+os.environ["LANG"] = "C.UTF-8"
+if hasattr(sys.stdout, "reconfigure"):
+    try: sys.stdout.reconfigure(encoding="utf-8")
+    except: pass
 
 st.set_page_config(page_title="광주·전남 청년 속마음 지도", layout="wide")
 st.markdown("""
