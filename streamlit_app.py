@@ -29,12 +29,11 @@ st.caption("360개 목소리를 7개 동네로 나눠 30초 만에 살펴보세�
 def summarize_clusters_with_llm(summary_df, api_key, model=None):
     try:
         from openai import OpenAI
-        import httpx
     except ImportError:
         raise RuntimeError("openai 패키지가 필요합니다. requirements.txt에 openai 추가 후 재배포하세요.")
-    # ascii 오류 방지: httpx 클라이언트에 utf-8 강제
-    _http = httpx.Client(headers={"Content-Type": "application/json; charset=utf-8"}, timeout=60)
-    client = OpenAI(base_url="https://integrate.api.nvidia.com/v1", api_key=api_key, http_client=_http, default_headers={"Content-Type": "application/json; charset=utf-8"})
+    # 헤더에 한글이 들어가면 httpx가 ascii로 인코딩하려다 터지므로, 키에서 비ASCII 제거
+    api_key = "".join(c for c in api_key.strip() if 32 <= ord(c) <= 126)
+    client = OpenAI(base_url="https://integrate.api.nvidia.com/v1", api_key=api_key)
     # 404 대비: Gemma 우선, 실패 시 Llama로 폴백 (둘 다 Nvidia 무료)
     candidates = [model] if model else ["google/gemma-2-9b-it", "meta/llama-3.1-8b-instruct", "mistralai/mistral-7b-instruct-v0.3"]
     rows = []
