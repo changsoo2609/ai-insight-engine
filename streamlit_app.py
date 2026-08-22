@@ -138,18 +138,20 @@ def build_analysis(raw, k):
     vec=TfidfVectorizer(token_pattern=r"(?u)\b[가-힣]{2,}\b", ngram_range=(1,2), stop_words=list(KOREAN_STOP_WORDS))
     tfidf=vec.fit_transform(docs["text"]); feat=vec.get_feature_names_out()
     kw=pd.DataFrame([{"cluster":cid, "keywords":", ".join(feat[tfidf[i].toarray().ravel().argsort()[::-1][:6]])} for i,cid in enumerate(docs["cluster"])])
-    pca=PCA(n_components=2, random_state=42); xy=pca.fit_transform(emb); df["x"],df["y"]=xy[:,0],xy[:,1]
+    pca=PCA(n_components=2, random_state=42); xy=pca.fit_transform(emb); df["지도X"],df["지도Y"]=xy[:,0],xy[:,1]; df["x"],df["y"]=df["지도X"],df["지도Y"]
+    # 주제명 매핑을 지도 hover에도 사용
+    _name_map = {}  # 아래 summary 생성 후 채움, 여기서는 cluster만
     fig=px.scatter(
-        df, x="x", y="y", color=df["cluster"].astype(str),
-        hover_data={"x": False, "y": False, "text": True, "cluster": True},
+        df, x="지도X", y="지도Y", color=df["cluster"].astype(str),
+        hover_data={"지도X": False, "지도Y": False, "x": False, "y": False, "text": True, "cluster": True},
         color_discrete_sequence=["#2F5BFF","#00C2A8","#FF8A3D","#7B61FF","#FF5A5F","#2EB872","#FFC93D","#8B5CF6","#F59E0B","#10B981"],
         title="비슷한 속마음끼리 모였어요 — 가까울수록 비슷한 얘기",
-        labels={"color": "주제"},
+        labels={"지도X": "지도 가로", "지도Y": "지도 세로", "color": "주제"},
     )
-    fig.update_traces(marker=dict(size=9, opacity=0.85, line=dict(width=0.7, color="white")))
+    fig.update_traces(marker=dict(size=9, opacity=0.85, line=dict(width=0.7, color="white")), hovertemplate="주제 %{customdata[1]}<br>의견: %{customdata[0]}<extra></extra>")
     fig.update_layout(legend_title_text="주제", legend_orientation="h", legend_y=1.05, legend_x=0, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#F6F7F9", font_family="Pretendard", margin=dict(t=50, b=10))
-    fig.update_xaxes(showticklabels=False, showgrid=False, zeroline=False)
-    fig.update_yaxes(showticklabels=False, showgrid=False, zeroline=False)
+    fig.update_xaxes(title_text="← 멀수록 다른 얘기 | 가까울수록 비슷한 얘기 →", showticklabels=False, showgrid=True, gridcolor="#E5E7EB", zeroline=False)
+    fig.update_yaxes(showticklabels=False, showgrid=True, gridcolor="#E5E7EB", zeroline=False)
     cnt=df["cluster"].value_counts().sort_index().reset_index(); cnt.columns=["cluster","count"]
     centers=km.cluster_centers_/np.linalg.norm(km.cluster_centers_, axis=1, keepdims=True)
     reps=[{"cluster":c,"대표의견":df.iloc[np.where(df["cluster"]==c)[0][cosine_similarity(emb[np.where(df["cluster"]==c)[0]], [centers[c]]).ravel().argmax()]]["text"]} for c in sorted(df["cluster"].unique())]
