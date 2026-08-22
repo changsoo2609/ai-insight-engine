@@ -8,12 +8,14 @@ from sentence_transformers import SentenceTransformer
 st.set_page_config(page_title="AI Insight Engine", layout="wide")
 st.title("AI Insight Engine — Streamlit")
 
-def summarize_clusters_with_llm(summary_df, api_key, model="google/gemma-2-9b-it"):
+def summarize_clusters_with_llm(summary_df, api_key, model=None):
     try:
         from openai import OpenAI
     except ImportError:
         raise RuntimeError("openai 패키지가 필요합니다. requirements.txt에 openai 추가 후 재배포하세요.")
     client = OpenAI(base_url="https://integrate.api.nvidia.com/v1", api_key=api_key)
+    # 404 대비: Gemma 우선, 실패 시 Llama로 폴백 (둘 다 Nvidia 무료)
+    candidates = [model] if model else ["google/gemma-2-9b-it", "meta/llama-3.1-8b-instruct", "mistralai/mistral-7b-instruct-v0.3"]
     rows = []
     for _, r in summary_df.iterrows():
         prompt = f"""당신은 청년 의견 분석가입니다. 아래 클러스터를 Issue / Root Cause / Action 3줄로 요약하세요. 각 항목은 1문장, 한글로 간결하게.
@@ -27,20 +29,32 @@ def summarize_clusters_with_llm(summary_df, api_key, model="google/gemma-2-9b-it
 Issue: ...
 Root Cause: ...
 Action: ..."""
-        resp = client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2,
-            max_tokens=300,
-        )
-        text = resp.choices[0].message.content.strip()
+        last_err = None
+        text = None
+        for m in candidates:
+            try:
+                resp = client.chat.completions.create(
+                    model=m,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.2,
+                    max_tokens=300,
+                )
+                text = resp.choices[0].message.content.strip()
+                break
+            except Exception as e:
+                last_err = e
+                if "404" in str(e) or "not found" in str(e).lower():
+                    continue
+                raise
+        if text is None:
+            raise RuntimeError(f"LLM 호출 실패 (시도 모델: {candidates}): {last_err}")
         issue = cause = action = ""
         for line in text.splitlines():
             if line.startswith("Issue:"): issue = line.replace("Issue:", "").strip()
             elif line.startswith("Root Cause:"): cause = line.replace("Root Cause:", "").strip()
             elif line.startswith("Action:"): action = line.replace("Action:", "").strip()
         if not (issue and cause and action):
-            issue = text[:100]
+            issue = text[:150]
         rows.append({"cluster": int(r["cluster"]), "Issue": issue, "Root Cause": cause, "Action": action})
     return pd.DataFrame(rows).sort_values("cluster")
 
@@ -57,7 +71,7 @@ with st.sidebar:
     else:
         st.info("키를 입력하면 주제 요약 기능이 활성화됩니다.")
     st.divider()
-    st.caption("모델: google/gemma-2-9b-it (무료)")
+    st.caption("모델: gemma-2-9b-it → 실패 시 llama-3.1-8b-instruct로 자동 전환 (무료)")
 
 @st.cache_resource
 def load_model():
