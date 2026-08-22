@@ -58,20 +58,32 @@ Action: ..."""
         rows.append({"cluster": int(r["cluster"]), "Issue": issue, "Root Cause": cause, "Action": action})
     return pd.DataFrame(rows).sort_values("cluster")
 
-# 사이드바: API 키 입력 (깃에 노출 방지 - Secrets 또는 입력창)
+# 사이드바: API 키 - 로그인 방식 (인식 후 입력창 숨김)
+if "nvidia_key" not in st.session_state:
+    st.session_state.nvidia_key = st.secrets.get("NVIDIA_API_KEY", "") if hasattr(st, "secrets") else ""
+
 with st.sidebar:
-    st.subheader("AI 요약 설정")
-    st.caption("키 입력은 메모리에만 저장되고 깃에 올라가지 않습니다.")
-    secret_key = st.secrets.get("NVIDIA_API_KEY", "") if hasattr(st, "secrets") else ""
-    user_key = st.text_input("NVIDIA API Key", type="password", placeholder="nvapi-...", help="https://integrate.nvidia.com 에서 발급. 비워두면 Secrets의 키를 사용합니다.", key="nvidia_key_input")
-    effective_api_key = (user_key.strip() if user_key else secret_key)
-    if effective_api_key:
-        st.success("API 키 인식됨")
-        os.environ["NVIDIA_API_KEY"] = effective_api_key
+    st.subheader("AI 요약")
+    if st.session_state.nvidia_key:
+        st.success("인증되었습니다 ✓")
+        if st.button("키 삭제", key="logout_nvidia"):
+            st.session_state.nvidia_key = ""
+            st.session_state.pop("ai_summary", None)
+            st.rerun()
     else:
-        st.info("키를 입력하면 주제 요약 기능이 활성화됩니다.")
-    st.divider()
-    st.caption("모델: gemma-2-9b-it → 실패 시 llama-3.1-8b-instruct로 자동 전환 (무료)")
+        st.caption("키를 입력하면 요약 기능이 켜집니다.")
+        _input = st.text_input("API Key", type="password", placeholder="nvapi-...", label_visibility="collapsed", key="nvidia_key_input")
+        if st.button("인증", use_container_width=True, key="auth_nvidia"):
+            if _input.strip():
+                st.session_state.nvidia_key = _input.strip()
+                st.rerun()
+            else:
+                st.warning("키를 입력하세요.")
+        st.caption("발급: integrate.nvidia.com")
+
+effective_api_key = st.session_state.nvidia_key
+if effective_api_key:
+    os.environ["NVIDIA_API_KEY"] = effective_api_key
 
 @st.cache_resource
 def load_model():
@@ -119,24 +131,25 @@ def build_analysis(raw, k):
     return df, emb, km, summary, fig
 
 if "state" not in st.session_state: st.session_state.state=None
-up=st.file_uploader("CSV 파일 업로드", type=["csv"], help="text 컬럼이 있는 CSV를 올려주세요")
-k=st.slider("주제 수 (k)", 3, 10, 7, help="클러스터 개수. 7이 기본값")
+up=st.file_uploader("CSV 파일 업로드", type=["csv"])
+k=st.slider("주제 수", 3, 10, 7)
 if st.button("분석 시작", type="primary"):
     if up is None: st.error("CSV 파일을 업로드하세요.")
     else:
         with st.spinner("분석 중..."):
             df,emb,km,summary,fig=build_analysis(up.getvalue(), k)
             st.session_state.state={"df":df,"emb":emb,"km":km,"summary":summary,"fig":fig}
-            st.success(f"분석 완료: {len(df):,}개 의견 / {k}개 주제로 분류")
+            st.success(f"분석 완료: {len(df):,}개 / {k}개 주제")
 if st.session_state.state:
     st.dataframe(st.session_state.state["summary"], use_container_width=True, hide_index=True)
     st.plotly_chart(st.session_state.state["fig"], use_container_width=True)
     st.download_button("결과 CSV 다운로드", st.session_state.state["summary"].to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig"), "result.csv", "text/csv")
-    st.divider(); st.subheader("AI 주제 요약 (Issue / 원인 / 조치)")
-    st.caption("Nvidia Gemma 무료 모델로 클러스터별 핵심을 자동 요약합니다. API 키가 있으면 활성화됩니다.")
-    if st.button("AI 요약 생성", type="secondary"):
+    st.divider(); st.subheader("AI 주제 요약")
+    if not effective_api_key:
+        st.info("사이드바에서 인증하면 요약을 생성할 수 있습니다.")
+    if st.button("AI 요약 생성", type="secondary", disabled=not bool(effective_api_key)):
         if not effective_api_key:
-            st.warning("사이드바에 NVIDIA API Key를 입력하거나 Streamlit Secrets에 등록하세요.")
+            st.warning("사이드바에서 먼저 인증하세요.")
         else:
             with st.spinner("AI 요약 생성 중... (클러스터 수만큼 호출)"):
                 try:
@@ -149,14 +162,12 @@ if st.session_state.state:
         st.dataframe(st.session_state["ai_summary"], use_container_width=True, hide_index=True)
         st.download_button("AI 요약 CSV 다운로드", st.session_state["ai_summary"].to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig"), "ai_summary.csv", "text/csv")
     st.divider(); st.subheader("의미 검색")
-    st.caption("찾고 싶은 내용을 문장으로 입력하면 비슷한 의견만 골라줍니다. 사투리로 입력해도 됩니다.")
     with st.form("search_form", clear_on_submit=False):
-        q=st.text_input("검색어", placeholder="예: 취업 지원 (사투리 예: 취업할라 카는데)")
+        q=st.text_input("검색어", placeholder="예: 취업 지원")
         col1, col2 = st.columns(2)
-        with col1: topk=st.slider("검색 결과 수", 3, 10, 5, key="topk")
-        with col2: threshold = st.slider("유사도 기준값 (낮을수록 많이 표시)", 0.0, 1.0, 0.40, 0.05, key="threshold", help="이 점수 미만은 숨김. 사투리는 점수가 낮게 나와 0.30~0.35로 낮추면 잘 나옵니다.")
+        with col1: topk=st.slider("결과 수", 3, 10, 5, key="topk")
+        with col2: threshold = st.slider("유사도 기준", 0.0, 1.0, 0.40, 0.05, key="threshold")
         submitted = st.form_submit_button("검색", use_container_width=True)
-        st.caption("엔터 키로도 검색됩니다.")
     if submitted:
         if not q.strip():
             st.warning("검색어를 입력하세요.")
@@ -167,10 +178,9 @@ if st.session_state.state:
             res=pd.DataFrame([{"rank":r,"score":float(sims[i]),"cluster":int(st.session_state.state["df"].iloc[i]["cluster"]),"text":st.session_state.state["df"].iloc[i]["text"]} for r,i in enumerate(idx,1)])
             filtered = res[res["score"] >= threshold].reset_index(drop=True)
             if filtered.empty:
-                st.warning(f"기준값 {threshold:.2f} 이상 결과가 없습니다. 기준값을 낮춰보세요. (가장 높은 점수: {res['score'].max():.4f})")
+                st.warning(f"기준 {threshold:.2f} 이상 없음 (최고 {res['score'].max():.4f})")
                 st.dataframe(res, use_container_width=True, hide_index=True, column_config={"score": st.column_config.NumberColumn("유사도", format="%.4f"), "text": st.column_config.TextColumn("의견", width="large"), "cluster": st.column_config.NumberColumn("주제", format="%d"), "rank": st.column_config.NumberColumn("순위", format="%d")})
-                st.caption("참고: 사투리나 구어체는 점수가 표준어보다 낮게 나옵니다.")
             else:
                 if len(filtered) < len(res):
-                    st.info(f"{topk}개 중 {len(filtered)}개만 기준값 {threshold:.2f} 이상")
+                    st.info(f"{topk}개 중 {len(filtered)}개 표시")
                 st.dataframe(filtered, use_container_width=True, hide_index=True, column_config={"score": st.column_config.NumberColumn("유사도", format="%.4f"), "text": st.column_config.TextColumn("의견", width="large"), "cluster": st.column_config.NumberColumn("주제", format="%d"), "rank": st.column_config.NumberColumn("순위", format="%d")})
