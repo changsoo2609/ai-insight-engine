@@ -230,10 +230,13 @@ if st.session_state.state:
     st.plotly_chart(st.session_state.state["fig"], use_container_width=True)
     st.download_button("결과 CSV 다운로드", st.session_state.state["summary"].to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig"), "result.csv", "text/csv")
     st.divider(); st.subheader("AI 주제 요약")
-    st.caption("주제명은 TF-IDF 1위 키워드에서 자동 생성됩니다. API 키가 있으면 더 자연스러운 한 단어명으로 다시 생성합니다.")
     if not effective_api_key:
-        st.info("사이드바에서 인증하면 AI가 주제명을 더 자연스럽게 다듬어줍니다.")
-        # LLM 없이도 카드로 요약 표시
+        with st.container(border=True):
+            st.markdown("### 🔒 로그인이 필요합니다")
+            st.caption("사이드바에서 Nvidia API Key를 입력하면 AI 요약이 표시됩니다.")
+            st.info("키가 없으면 좌측 사이드바에 `nvapi-...`를 입력하고 `인증`을 눌러주세요.")
+            st.caption("주제명은 지금도 TF-IDF로 생성되어 위에 표시됩니다. AI는 더 자연스럽게 다듬어줍니다.")
+        # LLM 없이도 주제명 카드만 미리보기로 표시 (비로그인 상태)
         cols = st.columns(min(3, len(summ)))
         for i, (_, r) in enumerate(summ.iterrows()):
             with cols[i % len(cols)]:
@@ -241,20 +244,17 @@ if st.session_state.state:
                     st.markdown(f"**{r['주제명']}** · {r['count']}개")
                     st.caption(r['keywords'])
                     st.write(r['대표의견'][:80] + "…")
-    if st.button("AI 요약 생성", type="secondary", disabled=not bool(effective_api_key)):
-        if not effective_api_key:
-            st.warning("사이드바에서 먼저 인증하세요.")
-        else:
+    else:
+        # 인증 후에만 생성 버튼 노출
+        if st.button("AI 요약 생성", type="secondary"):
             with st.spinner("AI 요약 생성 중..."):
                 try:
                     ai_summary = summarize_clusters_with_llm(st.session_state.state["summary"], effective_api_key)
-                    # LLM이 주제명을 한 단어로 다듬은 경우 반영
-                    # ai_summary의 주제가 주제명을 덮어쓰도록
                     st.session_state["ai_summary"] = ai_summary
                     st.success("요약 완료")
                 except Exception as e:
                     st.error(f"요약 실패: {e}")
-    if "ai_summary" in st.session_state:
+    if "ai_summary" in st.session_state and effective_api_key:
         st.markdown("""<style>
         [data-testid="stDataFrame"] td { white-space: normal !important; word-break: keep-all !important; line-height: 1.6; }
         </style>""", unsafe_allow_html=True)
