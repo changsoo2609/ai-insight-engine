@@ -5,8 +5,20 @@ from sklearn.decomposition import PCA
 from sklearn.metrics.pairwise import cosine_similarity
 from sentence_transformers import SentenceTransformer
 
-st.set_page_config(page_title="AI Insight Engine", layout="wide")
-st.title("AI Insight Engine — Streamlit")
+st.set_page_config(page_title="광주·전남 청년 속마음 지도", layout="wide")
+st.markdown("""
+<style>
+@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css');
+html, body, [class*="css"] { font-family: 'Pretendard Variable', 'Noto Sans KR', sans-serif; }
+.block-container { max-width: 1080px; padding-top: 1.2rem; }
+h1 { font-weight: 800 !important; letter-spacing: -0.02em; }
+[data-testid="stMetric"] { background: white; border: 1px solid #E5E7EB; border-radius: 12px; padding: 12px; }
+[data-testid="stDataFrame"] td { white-space: normal !important; word-break: keep-all !important; line-height: 1.6; }
+.stButton>button[kind="primary"] { border-radius: 999px; font-weight: 700; }
+</style>
+""", unsafe_allow_html=True)
+st.title("광주·전남 청년 속마음 지도")
+st.caption("360개 목소리를 7개 동네로 나눠 30초 만에 살펴보세요 — 사투리로 물어봐도 알아듣습니다")
 
 def summarize_clusters_with_llm(summary_df, api_key, model=None):
     try:
@@ -130,13 +142,12 @@ def build_analysis(raw, k):
     fig=px.scatter(
         df, x="x", y="y", color=df["cluster"].astype(str),
         hover_data={"x": False, "y": False, "text": True, "cluster": True},
-        color_discrete_sequence=px.colors.qualitative.Bold,
-        title="주제 지도",
+        color_discrete_sequence=["#2F5BFF","#00C2A8","#FF8A3D","#7B61FF","#FF5A5F","#2EB872","#FFC93D","#8B5CF6","#F59E0B","#10B981"],
+        title="비슷한 속마음끼리 모였어요 — 가까울수록 비슷한 얘기",
         labels={"color": "주제"},
     )
-    # hover에는 text/cluster만, x/y 수치 숨김 + 마커 진하게/크게
-    fig.update_traces(marker=dict(size=9, opacity=0.95, line=dict(width=0.7, color="white")))
-    fig.update_layout(legend_title_text="주제", xaxis_title=None, yaxis_title=None)
+    fig.update_traces(marker=dict(size=9, opacity=0.85, line=dict(width=0.7, color="white")))
+    fig.update_layout(legend_title_text="주제", legend_orientation="h", legend_y=1.05, legend_x=0, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#F6F7F9", font_family="Pretendard", margin=dict(t=50, b=10))
     fig.update_xaxes(showticklabels=False, showgrid=False, zeroline=False)
     fig.update_yaxes(showticklabels=False, showgrid=False, zeroline=False)
     cnt=df["cluster"].value_counts().sort_index().reset_index(); cnt.columns=["cluster","count"]
