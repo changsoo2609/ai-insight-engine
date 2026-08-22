@@ -48,14 +48,29 @@ Action: ..."""
                 raise
         if text is None:
             raise RuntimeError(f"LLM 호출 실패 (시도 모델: {candidates}): {last_err}")
-        issue = cause = action = ""
-        for line in text.splitlines():
-            if line.startswith("Issue:"): issue = line.replace("Issue:", "").strip()
-            elif line.startswith("Root Cause:"): cause = line.replace("Root Cause:", "").strip()
-            elif line.startswith("Action:"): action = line.replace("Action:", "").strip()
+        # 견고한 파싱: "- Issue:" , "클러스터 0 요약:" 등 변형 대응
+        import re
+        # 앞의 "클러스터 ... 요약:" 제거
+        t = re.sub(r"^.*?Issue\s*:", "Issue:", text, flags=re.DOTALL | re.IGNORECASE)
+        def _extract(field, next_field=None):
+            pat = rf"{field}\s*:\s*(.*?)(?=(?:Root Cause|Action|Issue)\s*:|$)" if next_field is None else rf"{field}\s*:\s*(.*?)(?={next_field}\s*:)"
+            m = re.search(pat, t, flags=re.DOTALL | re.IGNORECASE)
+            return re.sub(r"^\s*[-•]\s*", "", m.group(1).strip()) if m else ""
+        issue = _extract("Issue", "Root Cause")
+        cause = _extract("Root Cause", "Action")
+        action = _extract("Action")
+        # 폴백: 정규식 실패 시 전체 텍스트를 Issue에 넣고 원인/조치는 비워두지 않음
         if not (issue and cause and action):
-            issue = text[:150]
-        rows.append({"cluster": int(r["cluster"]), "Issue": issue, "Root Cause": cause, "Action": action})
+            # 줄 단위 재시도
+            for line in t.splitlines():
+                ll = line.strip().lstrip("-• ").strip()
+                if ll.lower().startswith("issue:") and not issue: issue = ll[6:].strip()
+                elif ll.lower().startswith("root cause:") and not cause: cause = ll[11:].strip()
+                elif ll.lower().startswith("action:") and not action: action = ll[7:].strip()
+            if not issue: issue = t.strip()[:120]
+            if not cause: cause = "-"
+            if not action: action = "-"
+        rows.append({"주제": int(r["cluster"]), "핵심 이슈": issue, "원인": cause, "조치": action})
     return pd.DataFrame(rows).sort_values("cluster")
 
 # 사이드바: API 키 - 로그인 방식 (인식 후 입력창 숨김)
@@ -159,7 +174,22 @@ if st.session_state.state:
                 except Exception as e:
                     st.error(f"요약 실패: {e}")
     if "ai_summary" in st.session_state:
-        st.dataframe(st.session_state["ai_summary"], use_container_width=True, hide_index=True)
+        # 테이블 잘림 방지: 글 줄바꿈 허용 + 컬럼 너비 조정
+        st.markdown("""<style>
+        [data-testid="stDataFrame"] td { white-space: normal !important; word-break: break-word !important; }
+        </style>""", unsafe_allow_html=True)
+        st.dataframe(st.session_state["ai_summary"], use_container_width=True, hide_index=True, height=420,
+            column_config={
+                "주제": st.column_config.NumberColumn("주제", width="small"),
+                "핵심 이슈": st.column_config.TextColumn("핵심 이슈", width="large"),
+                "원인": st.column_config.TextColumn("원인", width="large"),
+                "조치": st.column_config.TextColumn("조치", width="large"),
+                # 구버전 키 호환
+                "cluster": st.column_config.NumberColumn("주제", width="small"),
+                "Issue": st.column_config.TextColumn("핵심 이슈", width="large"),
+                "Root Cause": st.column_config.TextColumn("원인", width="large"),
+                "Action": st.column_config.TextColumn("조치", width="large"),
+            })
         st.download_button("AI 요약 CSV 다운로드", st.session_state["ai_summary"].to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig"), "ai_summary.csv", "text/csv")
     st.divider(); st.subheader("의미 검색")
     with st.form("search_form", clear_on_submit=False):
