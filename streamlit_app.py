@@ -82,7 +82,7 @@ Action: ..."""
             if not issue: issue = t.strip()[:120]
             if not cause: cause = "-"
             if not action: action = "-"
-        rows.append({"주제": int(r["cluster"]), "핵심 이슈": issue, "원인": cause, "조치": action})
+        rows.append({"주제": int(r["cluster"])+1, "핵심 이슈": issue, "원인": cause, "조치": action})
     return pd.DataFrame(rows).sort_values("주제")
 
 # 사이드바: API 키 - 로그인 방식 (인식 후 입력창 숨김)
@@ -117,7 +117,7 @@ def load_model():
     return SentenceTransformer("sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
 model = load_model()
 
-KOREAN_STOP_WORDS = {"청년","지역","광주","전남","정보","경우","부분","요즘","실제로","개인적으로","생각합니다","좋겠습니다","어렵다","어렵습니다","필요하다","필요합니다","있으면"}
+KOREAN_STOP_WORDS = {"청년","지역","광주","전남","정보","경우","부분","요즘","실제로","개인적으로","생각합니다","좋겠습니다","어렵다","어렵습니다","필요하다","필요합니다","있으면","입장","입장에서","사람","생각","의견","문제","경우","때문","관련","대한","대해","통해","위해","대한","있는","없는","같은","다른","많은","좋은","있는","있는","해당","우리","저희","그냥","정도","때문에"}
 
 def read_and_clean_csv(raw):
     df=None
@@ -139,16 +139,15 @@ def build_analysis(raw, k):
     tfidf=vec.fit_transform(docs["text"]); feat=vec.get_feature_names_out()
     kw=pd.DataFrame([{"cluster":cid, "keywords":", ".join(feat[tfidf[i].toarray().ravel().argsort()[::-1][:6]])} for i,cid in enumerate(docs["cluster"])])
     pca=PCA(n_components=2, random_state=42); xy=pca.fit_transform(emb); df["지도X"],df["지도Y"]=xy[:,0],xy[:,1]; df["x"],df["y"]=df["지도X"],df["지도Y"]
-    # 주제명 매핑을 지도 hover에도 사용
-    _name_map = {}  # 아래 summary 생성 후 채움, 여기서는 cluster만
+    df["주제번호"] = df["cluster"] + 1
     fig=px.scatter(
-        df, x="지도X", y="지도Y", color=df["cluster"].astype(str),
-        hover_data={"지도X": False, "지도Y": False, "x": False, "y": False, "text": True, "cluster": True},
+        df, x="지도X", y="지도Y", color=df["주제번호"].astype(str),
+        custom_data=["주제번호","text"],
         color_discrete_sequence=["#2F5BFF","#00C2A8","#FF8A3D","#7B61FF","#FF5A5F","#2EB872","#FFC93D","#8B5CF6","#F59E0B","#10B981"],
         title="비슷한 속마음끼리 모였어요 — 가까울수록 비슷한 얘기",
-        labels={"지도X": "지도 가로", "지도Y": "지도 세로", "color": "주제"},
+        labels={"color": "주제"},
     )
-    fig.update_traces(marker=dict(size=9, opacity=0.85, line=dict(width=0.7, color="white")), hovertemplate="주제 %{customdata[1]}<br>의견: %{customdata[0]}<extra></extra>")
+    fig.update_traces(marker=dict(size=9, opacity=0.85, line=dict(width=0.7, color="white")), hovertemplate="주제 %{customdata[0]}번<br>의견: %{customdata[1]}<extra></extra>")
     fig.update_layout(legend_title_text="주제", legend_orientation="h", legend_y=1.05, legend_x=0, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="#F6F7F9", font_family="Pretendard", margin=dict(t=50, b=10))
     fig.update_xaxes(title_text="← 멀수록 다른 얘기 | 가까울수록 비슷한 얘기 →", showticklabels=False, showgrid=True, gridcolor="#E5E7EB", zeroline=False)
     fig.update_yaxes(showticklabels=False, showgrid=True, gridcolor="#E5E7EB", zeroline=False)
@@ -190,8 +189,9 @@ if st.button("분석 시작", type="primary"):
 if st.session_state.state:
     # 요약: 주제명(한 단어) + 카드형으로 잘림 해소
     summ = st.session_state.state["summary"]
-    # 표시용 요약 (길이 제한)
+    # 표시용 요약 (길이 제한, 번호 1부터)
     disp = summ[["cluster","주제명","keywords","count","대표의견"]].copy()
+    disp["cluster"] = disp["cluster"] + 1
     disp.columns = ["번호","주제명","키워드","의견 수","대표 한마디"]
     disp["대표 한마디"] = disp["대표 한마디"].str.slice(0, 60) + "…"
     st.dataframe(disp, use_container_width=True, hide_index=True, column_config={
@@ -267,7 +267,7 @@ if st.session_state.state:
             qemb=model.encode([q], normalize_embeddings=True)
             sims=cosine_similarity(qemb, st.session_state.state["emb"]).ravel()
             idx=sims.argsort()[::-1][:topk]
-            res=pd.DataFrame([{"rank":r,"score":float(sims[i]),"cluster":int(st.session_state.state["df"].iloc[i]["cluster"]),"text":st.session_state.state["df"].iloc[i]["text"]} for r,i in enumerate(idx,1)])
+            res=pd.DataFrame([{"rank":r,"score":float(sims[i]),"cluster":int(st.session_state.state["df"].iloc[i]["cluster"])+1,"text":st.session_state.state["df"].iloc[i]["text"]} for r,i in enumerate(idx,1)])
             filtered = res[res["score"] >= threshold].reset_index(drop=True)
             if filtered.empty:
                 st.warning(f"기준 {threshold:.2f} 이상 없음 (최고 {res['score'].max():.4f})")
